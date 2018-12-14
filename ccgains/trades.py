@@ -373,13 +373,18 @@ class TradeHistory(object):
             dtime += pd.Timedelta(1, 'ns')
         return dtime
 
-    def add_missing_transaction_fees(self, raise_on_error=True):
+    def add_missing_transaction_fees(self, raise_on_error=True,
+                                     method='simplified'):
         """Some exchanges do not include withdrawal fees in their
         exported csv files. This will try to add these missing fees
         by comparing withdrawn amounts with amounts deposited on other
         exchanges shortly after withdrawal. Call this only after all
         transactions from every involved exchange and wallet were
         imported.
+
+        :param method: str, Defines which method to use to obtain the
+            missing transactions fees.
+            Possible strings: 'simplified' (default) or 'blockcypher'
 
         This uses a really simple algorithm, so it is not guaranteed to
         work in every case. Basically, it finds the first deposit
@@ -429,6 +434,28 @@ class TradeHistory(object):
             elif t.buyval > 0 and (not t.sellval or not t.sellcur):
                 # This seems to be a deposit
                 translist.append((i, 'd', t.buyval))
+
+        if method == 'simplified':
+            self._missing_transactions_fees_simplified(translist,
+                                                       raise_on_error)
+        elif method == 'blockcypher':
+            self._missing_transactions_fees_blockcypher(translist)
+        else:
+            print('Method "{m}" does not exist.'.format(m=method))
+
+    def _missing_transactions_fees_simplified(self, translist,
+                                              raise_on_error=True):
+        """TODO: Docstring for _missing_transactions_fees_simplified.
+
+        Parameters
+        ----------
+        translist : TODO
+
+        Returns
+        -------
+        TODO
+
+        """
         unhandled_withdrawals = []
         num_unmatched = 0
         num_feeless = 0
@@ -474,6 +501,40 @@ class TradeHistory(object):
                 '%i withdrawals could not be matched with deposits, of which '
                 '%i have no assigned withdrawal fees.' % (
                         num_unmatched, num_feeless))
+
+    def _missing_transactions_fees_blockcypher(self, translist):
+        """TODO: Docstring for _missing_transactions_fees_blockcypher.
+
+        Parameters
+        ----------
+        translist : TODO
+
+        Returns
+        -------
+        TODO
+
+        """
+        from blockcypher import get_transaction_details, from_satoshis
+        for i, kind, amount in translist:
+            if kind == 'w':
+                # Get transaction information
+                if self[i].feeval == 0.:
+                    currency = self[i].sellcur
+                    # I assume that the TX is stored in 'mark'
+                    tx = self[i].mark
+                    try:
+                        tx = get_transaction_details(
+                            tx, coin_symbol=currency.lower())
+                        if currency == 'BTC':
+                            fee = from_satoshis(tx['fees'], currency.lower())
+                            self[i].feeval = Decimal(fee)
+                        elif currency == 'LTC':
+                            # I am not sure about this factor, but it
+                            # seems to work
+                            fee = tx['fees'] * 0.00000001
+                            self[i].feeval = Decimal(fee)
+                    except:
+                        print('This withdrawal has no TX mark')
 
     def append_csv(
             self, file_name, param_locs=range(11), delimiter=',', skiprows=1,
