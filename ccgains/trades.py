@@ -516,6 +516,10 @@ class TradeHistory(object):
                 # when importing from csv in self.append_bisq_csv, so
                 # skip them here:
                 continue
+            elif t.kind.upper() in ['PAYMENT', 'DISTRIBUTION']:
+                # These look like withdrawals/deposits, because they lack
+                # either sell or buy amount, but are not. Ignore them:
+                continue
             elif t.sellval > 0 and (not t.buycur or (not t.buyval
                 # In Poloniex' csv data, there is sometimes a trade listed
                 # with a non-zero sellval but with 0 buyval, because the
@@ -578,6 +582,52 @@ class TradeHistory(object):
                 '%i withdrawals could not be matched with deposits, of which '
                 '%i have no assigned withdrawal fees.' % (
                         num_unmatched, num_feeless))
+
+    def update_ticker_names(self, changes=None):
+        """Update the names of a ticker previously imported into this
+        TradeHistory.
+
+        Coins occasionally change ticker symbols, but older history files may
+        not include the change, and instead still refer to the coin by its
+        old name, although pricing history has changed all data to the new name.
+        This method allows for in-place swapping to the new name.
+
+        :param changes: (dict{string: string})
+            A dictionary in the form {'old ticker': 'new ticker}. All occurrences
+            of 'old ticker' in this TradeHistory will be updated to 'new ticker'
+            Price, cost, amount data will remain unchanged.
+
+        """
+        if changes is None:
+            log.warning('`update_ticker_names` got no tickers to change')
+            return
+        if not isinstance(changes, dict):
+            log.warning('`update_ticker_names` expected a dict, but got %s'
+                        % type(changes))
+            return
+        count = {}
+        for i in range(len(self.tlist)):
+            for old, new in changes.items():
+                num_replaced = 0
+                # Possibly replace either buy or sell currency, but not both
+                if self.tlist[i].buycur == old:
+                    self.tlist[i].buycur = new
+                    num_replaced += 1
+                elif self.tlist[i].sellcur == old:
+                    self.tlist[i].sellcur = new
+                    num_replaced += 1
+                # Possibly replace the fee currency as well
+                if self.tlist[i].feecur == old:
+                    self.tlist[i].feecur = new
+                    num_replaced += 1
+                # Track replacements to report out at the end
+                if old in count.keys():
+                    count[old] += num_replaced
+                else:
+                    count[old] = num_replaced
+        for symbol, counts in count.items():
+            log.info('Replaced %i occurrences of ticker "%s" with "%s"'
+                     % (counts, symbol, changes[symbol]))
 
     def append_csv(
             self, file_name, param_locs=range(11), delimiter=',', skiprows=1,
